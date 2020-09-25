@@ -155,6 +155,14 @@ def get_plist_images(plist_path):
                 'uuid': meta[k]['uuid'],
                 'rawTextureUuid': meta[k]['rawTextureUuid'],
             }
+
+        basename = os.path.basename(plist_path)
+        ret[basename] = {
+            'name': basename,
+            'uuid': j['uuid'],
+            'rawTextureUuid': j['rawTextureUuid']
+        }
+
         return ret
 
     exit(-1)
@@ -165,33 +173,102 @@ def get_plist_images(plist_path):
 # 'name': '01.png',
 # 'uuid': 'd9c6fbc0-ddb0-497a-a670-a86bb0bb143d',
 # 'rawTextureUuid': 'abcb3647-c223-4d8d-bf73-63cab31c5d46',
-# 'src-uuid': 'd9c6fbc0-ddb0-497a-a670-a86bb0bb143d',
-# 'src-rawTextureUuid': 'abcb3647-c223-4d8d-bf73-63cab31c5d46',
-# >
-def get_folder_images(folder_from, plist_images):
+# 'ref' : [{
+# 'path': '',
+# 'name': '',
+# 'uuid': 'd9c6fbc0-ddb0-497a-a670-a86bb0bb143d',
+# 'rawTextureUuid': 'abcb3647-c223-4d8d-bf73-63cab31c5d46',
+# }]>
+def get_folder_images(folder_from, plist_images, plist_path):
     image_refers = plist_images
     image_names = plist_images.keys()
     warn = 0
     ref = 0
+    yes_to_all = False
+    plist_name = os.path.basename(plist_path)
     for root, dirs, files in os.walk(folder_from):
         for fn in files:
-            if not fn.lower().endswith('.png'):
-                continue
+            if fn.lower().endswith('.png'):
+                if fn not in image_names:
+                    log.warn(fn + ' in [ ' + root + ' ] not in plist')
+                    print()
+                    warn += 1
+                    continue
 
-            if fn not in image_names:
-                log.warn(fn + ' in ' + root + ' not in plist')
-                warn += 1
-                continue
+                img_path = os.path.join(root, fn)
+                j = json.load(open(img_path + '.meta'))
+                k = fn[:-4]  # .png len
+                meta = j['subMetas'][k]
 
-            img_path = os.path.join(root, fn)
-            j = json.load(open(img_path + '.meta'))
-            k = fn[:-4]  # .png len
-            meta = j['subMetas'][k]
+                log.head('will replace png named [ ' + fn + ' ] reference [ ' + img_path + ' ] with plist')
 
-            image_refers[fn]['src-path'] = img_path
-            image_refers[fn]['src-uuid'] = meta['uuid']
-            image_refers[fn]['src-rawTextureUuid'] = meta['rawTextureUuid']
-            ref += 1
+                if not yes_to_all:
+                    log.fail('return to continue, n/N to skip, A yes to all')
+                    do = input()
+
+                if do.strip().startswith('A'):
+                    yes_to_all = True
+
+                if not do.strip().startswith('n') or yes_to_all:
+                    if image_refers[fn].get('ref', None) is None:
+                        image_refers[fn]['ref'] = []
+                    image_refers[fn]['ref'].append({
+                        'path': img_path,
+                        'name': fn,
+                        'uuid': meta['uuid'],
+                        'rawTextureUuid': meta['rawTextureUuid']
+                    })
+
+                ref += 1
+
+            elif fn.lower().endswith('.plist'):
+                plist_path = os.path.join(root, fn)
+                j = json.load(open(plist_path + '.meta'))
+                plist_meta = j['subMetas']
+                for k in plist_meta:
+                    if k not in image_names:
+                        log.warn(k + ' in [ ' + plist_path + ' ] not in plist')
+                        print()
+                        warn += 1
+                        continue
+
+                    meta = plist_meta[k]
+
+                    log.head('will replace png named [ ' + k + ' ] reference [ ' + plist_path + ' ] with plist')
+
+                    if not yes_to_all:
+                        log.fail('return to continue, n/N to skip, A yes to all')
+                        do = input()
+
+                    if do.strip().startswith('A'):
+                        yes_to_all = True
+
+                    if not do.strip().startswith('n') or yes_to_all:
+                        if image_refers[k].get('ref', None) is None:
+                            image_refers[k]['ref'] = []
+                        image_refers[k]['ref'].append({
+                            'path': plist_path,
+                            'name': k,
+                            'uuid': meta['uuid'],
+                            'rawTextureUuid': meta['rawTextureUuid']
+                        })
+
+                        if image_refers[plist_name].get('ref', None) is None:
+                            image_refers[plist_name]['ref'] = []
+                        has = False
+                        for x in image_refers[plist_name]['ref']:
+                            if x['uuid'] == j['uuid']:
+                                has = True
+                                break
+                        if not has:
+                            image_refers[plist_name]['ref'].append({
+                                'path': plist_path,
+                                'name': fn,
+                                'uuid': j['uuid'],
+                                'rawTextureUuid': j['rawTextureUuid']
+                            })
+
+                    ref += 1
 
     return image_refers, warn, ref
 
@@ -201,10 +278,21 @@ def contains_src_uuid(image_refers, line):
     rawTextureUuid = []
     for k in image_refers:
         o = image_refers[k]
-        if str(line).find(o['src-uuid']) != -1:
-            uuid.append(o)
-        if str(line).find(o['src-rawTextureUuid']) != -1:
-            rawTextureUuid.append(o)
+        for x in o['ref']:
+            if str(line).find(x['uuid']) != -1:
+                uuid.append({
+                    'uuid': o['uuid'],
+                    'name': o['name'],
+                    'path': x['path'],
+                    'src-uuid': x['uuid']
+                })
+            if str(line).find(x['rawTextureUuid']) != -1:
+                rawTextureUuid.append({
+                    'uuid': o['rawTextureUuid'],
+                    'name': o['name'],
+                    'path': x['path'],
+                    'src-rawTextureUuid': x['rawTextureUuid']
+                })
     return uuid, rawTextureUuid
 
 
@@ -240,19 +328,21 @@ def change_image_sprite_frame_refer(image_refers, project_path):
                 log.head('found lines to replace: ' + str(i))
 
                 for j in range(start, end):
-                    log.blue(content[j])
+                    s = content[j]
+                    s = s.strip('\n')
+                    log.blue(s)
 
                 sf = ''
                 for u in uuid:
                     if len(sf) > 0:
                         sf += ', '
-                    sf += u['name']
+                    sf += u['name'] + ' in ' + u['path']
 
                 tx = ''
                 for r in rawTextureUuid:
                     if len(tx) > 0:
                         tx += ', '
-                    tx += r['name']
+                    tx += r['name'] + ' in ' + r['path']
 
                 log.head('will replace sprite frames [' + sf + '] and textures [' + tx + '] in ' + file_path)
 
@@ -277,16 +367,29 @@ def deal_with_images(folder_from, plist_to, project_path):
 
     plist_images = get_plist_images(plist_to)
 
+    log.head('get image ref in plist:')
+    for k in plist_images.keys():
+        log.blue(k)
+
+    print()
+
     log.head('searching images ...')
     print()
 
-    image_refers, warn_count, ref_count = get_folder_images(folder_from, plist_images)
+    image_refers, warn_count, ref_count = get_folder_images(folder_from, plist_images, plist_to)
 
     for k in image_refers:
         o = image_refers[k]
+
         log.green('will exchange ref :')
-        log.blue('\t' + o['src-path'])
+        print()
+        for j in o['ref']:
+            log.blue('\t' + j['path'])
+            log.blue('\t' + j['name'])
+            print()
+
         log.green('with ref :')
+        print()
         log.blue('\t' + o['name'] + ' in ' + plist_to)
         print()
 
