@@ -278,6 +278,10 @@ def contains_src_uuid(image_refers, line):
     rawTextureUuid = []
     for k in image_refers:
         o = image_refers[k]
+
+        if o.get('ref', None) is None:
+            continue
+
         for x in o['ref']:
             if str(line).find(x['uuid']) != -1:
                 uuid.append({
@@ -381,17 +385,18 @@ def deal_with_images(folder_from, plist_to, project_path):
     for k in image_refers:
         o = image_refers[k]
 
-        log.green('will exchange ref :')
-        print()
-        for j in o['ref']:
-            log.blue('\t' + j['path'])
-            log.blue('\t' + j['name'])
+        if o.get('ref', None) is not None:
+            log.green('will exchange ref :')
             print()
+            for j in o['ref']:
+                log.blue('\t' + j['path'])
+                log.blue('\t' + j['name'])
+                print()
 
-        log.green('with ref :')
-        print()
-        log.blue('\t' + o['name'] + ' in ' + plist_to)
-        print()
+            log.green('with ref :')
+            print()
+            log.blue('\t' + o['name'] + ' in ' + plist_to)
+            print()
 
     log.fail('warn count: ' + str(warn_count))
     log.fail('ref count: ' + str(ref_count))
