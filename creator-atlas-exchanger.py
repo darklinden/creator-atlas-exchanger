@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import hashlib
 import json
 import os
 import shutil
@@ -18,22 +17,6 @@ class Logger:
     WARNING = '\033[93m'
     FAIL = '\033[91m'
     ENDC = '\033[0m'
-
-    def enable(self):
-        self.HEADER = '\033[95m'
-        self.OKBLUE = '\033[94m'
-        self.OKGREEN = '\033[92m'
-        self.WARNING = '\033[93m'
-        self.FAIL = '\033[91m'
-        self.ENDC = '\033[0m'
-
-    def disable(self):
-        self.HEADER = ''
-        self.OKBLUE = ''
-        self.OKGREEN = ''
-        self.WARNING = ''
-        self.FAIL = ''
-        self.ENDC = ''
 
     def head(self, s):
         print(self.HEADER + str(s) + self.ENDC)
@@ -52,8 +35,6 @@ class Logger:
 
 
 log = Logger()
-
-list_folder_name = ['res', 'src', 'subpackages']
 
 
 def run_cmd(cmd):
@@ -88,49 +69,6 @@ def self_install(file, des):
     run_cmd(['chmod', 'a+x', to_path])
 
 
-def mkdir_p(path):
-    try:
-        if path == "":
-            return
-
-        if os.path.isfile(path):
-            print("remove file: " + path)
-            os.remove(path)
-
-        if not os.path.isdir(path):
-            print("make dir: " + path)
-            os.makedirs(path)
-
-    except Exception as exc:
-        print(exc)
-
-
-def base_folder(path):
-    path = os.path.normpath(path)
-    path = str(path).rstrip(os.path.sep)
-    pos = path.rfind(os.path.sep)
-    if pos == -1:
-        return ""
-    else:
-        path = path[:pos]
-        path = path.rstrip(os.path.sep)
-        return path
-
-
-def generate_file_md5(file_path, block_size=2 ** 20):
-    if not os.path.isfile(file_path):
-        return ''
-
-    m = hashlib.md5()
-    with open(file_path, "rb") as f:
-        while True:
-            buf = f.read(block_size)
-            if not buf:
-                break
-            m.update(buf)
-    return m.hexdigest()
-
-
 # return map :
 # '01.png' : <
 # 'name': '01.png',
@@ -150,10 +88,15 @@ def get_plist_images(plist_path):
         j = json.load(open(plist_path + '.meta'))
         meta = j['subMetas']
         for k in images:
+            if meta.get(k, None) is not None:
+                ref = meta[k]
+            else:
+                ref = meta[str(k).replace('/', '-')]
+
             ret[k] = {
                 'name': k,
-                'uuid': meta[k]['uuid'],
-                'rawTextureUuid': meta[k]['rawTextureUuid'],
+                'uuid': ref['uuid'],
+                'rawTextureUuid': ref['rawTextureUuid'],
             }
 
         basename = os.path.basename(plist_path)
@@ -181,7 +124,6 @@ def get_plist_images(plist_path):
 # }]>
 def get_folder_images(folder_from, plist_images, plist_path):
     image_refers = plist_images
-    image_names = plist_images.keys()
     warn = 0
     ref = 0
     yes_to_all = False
@@ -189,32 +131,43 @@ def get_folder_images(folder_from, plist_images, plist_path):
     for root, dirs, files in os.walk(folder_from):
         for fn in files:
             if fn.lower().endswith('.png'):
-                if fn not in image_names:
+                img_path = os.path.join(root, fn)
+
+                in_plist = False
+                ref_key = ''
+                for rk in plist_images:
+                    n = plist_images[rk]
+                    if img_path.endswith(n['name']):
+                        ref_key = rk
+                        in_plist = True
+                        break
+
+                if not in_plist:
                     log.warn(fn + ' in [ ' + root + ' ] not in plist')
                     print()
                     warn += 1
                     continue
 
-                img_path = os.path.join(root, fn)
                 j = json.load(open(img_path + '.meta'))
                 k = fn[:-4]  # .png len
                 meta = j['subMetas'][k]
 
                 log.head('will replace png named [ ' + fn + ' ] reference [ ' + img_path + ' ] with plist')
 
+                do = None
                 if not yes_to_all:
                     log.fail('return to continue, n/N to skip, A yes to all')
                     do = input()
 
-                if do.strip().startswith('A'):
+                if do is not None and do.strip().startswith('A'):
                     yes_to_all = True
 
-                if not do.strip().startswith('n') or yes_to_all:
-                    if image_refers[fn].get('ref', None) is None:
-                        image_refers[fn]['ref'] = []
-                    image_refers[fn]['ref'].append({
+                if yes_to_all or (not do.strip().startswith('n')):
+                    if image_refers[ref_key].get('ref', None) is None:
+                        image_refers[ref_key]['ref'] = []
+                    image_refers[ref_key]['ref'].append({
                         'path': img_path,
-                        'name': fn,
+                        'name': ref_key,
                         'uuid': meta['uuid'],
                         'rawTextureUuid': meta['rawTextureUuid']
                     })
@@ -223,32 +176,52 @@ def get_folder_images(folder_from, plist_images, plist_path):
 
             elif fn.lower().endswith('.plist'):
                 plist_path = os.path.join(root, fn)
+
+                try:
+                    plist = biplist.readPlist(plist_path)
+                except:
+                    plist = None
+                    log.fail("read plist failed: " + str(sys.exc_info()[0]))
+
                 j = json.load(open(plist_path + '.meta'))
                 plist_meta = j['subMetas']
-                for k in plist_meta:
-                    if k not in image_names:
+                for k in plist['frames'].keys():
+                    if plist_meta.get(k, None) is not None:
+                        meta = plist_meta[k]
+                    else:
+                        meta = plist_meta[str(k).replace('/', '-')]
+
+                    in_plist = False
+                    ref_key = ''
+                    for rk in plist_images:
+                        n = plist_images[rk]
+                        if k.endswith(n['name']):
+                            ref_key = rk
+                            in_plist = True
+                            break
+
+                    if not in_plist:
                         log.warn(k + ' in [ ' + plist_path + ' ] not in plist')
                         print()
                         warn += 1
                         continue
 
-                    meta = plist_meta[k]
-
                     log.head('will replace png named [ ' + k + ' ] reference [ ' + plist_path + ' ] with plist')
 
+                    do = None
                     if not yes_to_all:
                         log.fail('return to continue, n/N to skip, A yes to all')
                         do = input()
 
-                    if do.strip().startswith('A'):
+                    if do is not None and do.strip().startswith('A'):
                         yes_to_all = True
 
-                    if not do.strip().startswith('n') or yes_to_all:
-                        if image_refers[k].get('ref', None) is None:
-                            image_refers[k]['ref'] = []
-                        image_refers[k]['ref'].append({
+                    if yes_to_all or (not do.strip().startswith('n')):
+                        if image_refers[ref_key].get('ref', None) is None:
+                            image_refers[ref_key]['ref'] = []
+                        image_refers[ref_key]['ref'].append({
                             'path': plist_path,
-                            'name': k,
+                            'name': ref_key,
                             'uuid': meta['uuid'],
                             'rawTextureUuid': meta['rawTextureUuid']
                         })
@@ -298,6 +271,30 @@ def contains_src_uuid(image_refers, line):
                     'src-rawTextureUuid': x['rawTextureUuid']
                 })
     return uuid, rawTextureUuid
+
+
+def change_data_ref(data, key_to_change, value_from, value_to):
+    change_count = 0
+    for key in data.keys():
+        o = data[key]
+        if key == key_to_change:
+            if value_from == 'any' or o == value_from:
+                if o != value_to:
+                    data[key] = value_to
+                    change_count += 1
+        else:
+            if isinstance(o, dict):
+                o, c = change_data_ref(o, key_to_change, value_from, value_to)
+                data[key] = o
+                change_count += c
+            elif isinstance(o, list):
+                new_list = []
+                for i in range(0, len(o)):
+                    oi, c = change_data_ref(o[i], key_to_change, value_from, value_to)
+                    new_list.append(oi)
+                    change_count += c
+                data[key] = new_list
+    return data, change_count
 
 
 def change_image_sprite_frame_refer(image_refers, project_path):
@@ -387,14 +384,10 @@ def deal_with_images(folder_from, plist_to, project_path):
 
         if o.get('ref', None) is not None:
             log.green('will exchange ref :')
-            print()
             for j in o['ref']:
-                log.blue('\t' + j['path'])
-                log.blue('\t' + j['name'])
-                print()
+                log.blue('\t' + j['name'] + '  -  ' + j['path'])
 
             log.green('with ref :')
-            print()
             log.blue('\t' + o['name'] + ' in ' + plist_to)
             print()
 
