@@ -122,6 +122,12 @@ def get_plist_images(plist_path):
             else:
                 ref = meta[str(k).replace('/', '-')]
 
+            sourceColorRect = plist['frames'][k]['sourceColorRect']
+            sourceColorRect = sourceColorRect.strip('{')
+            sourceColorRect = sourceColorRect.strip('}')
+            origin = sourceColorRect.split('},{')[0]
+            xy = origin.split(',')
+
             ret[k] = {
                 'name': k,
                 'uuid': ref['uuid'],
@@ -131,6 +137,8 @@ def get_plist_images(plist_path):
                     'y': ref['trimY'],
                     'w': ref['width'],
                     'h': ref['height'],
+                    'ox': int(xy[0]),
+                    'oy': int(xy[1]),
                 },
                 'rotated': plist['frames'][k]['rotated'],
             }
@@ -145,6 +153,8 @@ def get_plist_images(plist_path):
                 'y': 0,
                 'w': j['size']['width'],
                 'h': j['size']['height'],
+                'ox': 0,
+                'oy': 0,
             },
             'rotated': False,
         }
@@ -279,18 +289,16 @@ def get_folder_images(folder_from, plist_images, plist_path):
                 os.remove(fnt_path + '.meta')
 
                 png_frame = png_ref['frame']
+                offset_x = png_frame['ox']
+                offset_y = png_frame['oy']
+
                 for i in range(0, len(fnt_content)):
                     l = fnt_content[i]
 
                     if l.startswith('char ') or l.startswith('page '):
                         properties = l.split(' ')
 
-                        offset_x = 0
-                        offset_y = 0
-                        x = 0
-                        y = 0
-                        w = 0
-                        h = 0
+                        x, y, w, h, ox, oy = 0, 0, 0, 0, 0, 0
 
                         for j in range(1, len(properties)):
                             p = properties[j]
@@ -304,34 +312,36 @@ def get_folder_images(folder_from, plist_images, plist_path):
                                 pair[1] = '"' + plist_name[:-6] + '.png"'
 
                             if pair[0] == 'x':
-                                x = int(pair[1]) + png_frame['x']
+                                x = int(pair[1]) + png_frame['x'] - offset_x
+                                if x < png_frame['x']:
+                                    ox = png_frame['x'] - x
+                                    x = png_frame['x']
                                 pair[1] = str(x)
 
                             if pair[0] == 'y':
-                                y = int(pair[1]) + png_frame['y']
+                                y = int(pair[1]) + png_frame['y'] - offset_y
+                                if y < png_frame['y']:
+                                    oy = png_frame['y'] - y
+                                    y = png_frame['y']
                                 pair[1] = str(y)
 
                             if pair[0] == 'width':
-                                w = int(pair[1])
+                                w = int(pair[1]) - ox
                                 if x + w > png_frame['w']:
-                                    offset_x = (x + w) - png_frame['w']
-                                    w -= offset_x
-                                    pair[1] = str(w)
+                                    w -= int((x + w) - png_frame['w'])
+                                pair[1] = str(w)
 
                             if pair[0] == 'height':
-                                h = int(pair[1])
+                                h = int(pair[1]) - oy
                                 if y + h > png_frame['h']:
-                                    offset_y = (y + h) - png_frame['h']
-                                    h -= offset_y
-                                    pair[1] = str(h)
+                                    h -= int((y + h) - png_frame['h'])
+                                pair[1] = str(h)
 
                             if pair[0] == 'xoffset':
-                                if offset_x != 0:
-                                    pair[1] = str(int(pair[1]) + int(offset_x / 2))
+                                pair[1] = str(int(pair[1]) + int(ox))
 
                             if pair[0] == 'yoffset':
-                                if offset_y != 0:
-                                    pair[1] = str(int(pair[1]) + int(offset_y / 2))
+                                pair[1] = str(int(pair[1]) + int(oy))
 
                             properties[j] = "=".join(pair)
 
