@@ -122,25 +122,10 @@ def get_plist_images(plist_path):
             else:
                 ref = meta[str(k).replace('/', '-')]
 
-            sourceColorRect = plist['frames'][k]['sourceColorRect']
-            sourceColorRect = sourceColorRect.strip('{')
-            sourceColorRect = sourceColorRect.strip('}')
-            origin = sourceColorRect.split('},{')[0]
-            xy = origin.split(',')
-
             ret[k] = {
                 'name': k,
                 'uuid': ref['uuid'],
                 'rawTextureUuid': ref['rawTextureUuid'],
-                'frame': {
-                    'x': ref['trimX'],
-                    'y': ref['trimY'],
-                    'w': ref['width'],
-                    'h': ref['height'],
-                    'ox': int(xy[0]),
-                    'oy': int(xy[1]),
-                },
-                'rotated': plist['frames'][k]['rotated'],
             }
 
         basename = os.path.basename(plist_path)
@@ -148,15 +133,6 @@ def get_plist_images(plist_path):
             'name': basename,
             'uuid': j['uuid'],
             'rawTextureUuid': j['rawTextureUuid'],
-            'frame': {
-                'x': 0,
-                'y': 0,
-                'w': j['size']['width'],
-                'h': j['size']['height'],
-                'ox': 0,
-                'oy': 0,
-            },
-            'rotated': False,
         }
 
         return ret
@@ -175,196 +151,17 @@ def get_plist_images(plist_path):
 # 'uuid': 'd9c6fbc0-ddb0-497a-a670-a86bb0bb143d',
 # 'rawTextureUuid': 'abcb3647-c223-4d8d-bf73-63cab31c5d46',
 # }]>
-def get_folder_images(folder_from, plist_images, plist_path):
+def get_folder_images(folder_from, plist_images, plist_path, quiet):
     image_refers = plist_images
     warn = 0
     ref = 0
-    yes_to_all = False
+    yes_to_all = quiet or False
     plist_name = os.path.basename(plist_path)
-    plist_folder = base_folder(plist_path)
-
-    # reset all reference moved bitmap fonts
-
-    png_fnt = []
-    no_png_fnt = []
-
-    # find all fnt
-    for root, dirs, files in os.walk(folder_from):
-        for fn in files:
-            if fn.lower().endswith('.fnt'):
-                fnt_path = os.path.join(root, fn)
-                png_path = fnt_path[:-4] + '.png'
-
-                if os.path.isfile(png_path):
-                    png_fnt.append(fnt_path)
-                else:
-                    no_png_fnt.append(fnt_path)
-
-    if len(no_png_fnt) > 0:
-        for npf in no_png_fnt:
-            npf_name = os.path.basename(npf)
-            for pf in png_fnt:
-                if pf.endswith(npf_name):
-                    log.head('will replace font png [' + npf + '] with ' + pf)
-
-                    do = None
-                    if not yes_to_all:
-                        log.fail('return to continue, n/N to skip, A yes to all')
-                        do = input()
-
-                    if do is not None and do.strip().startswith('A'):
-                        yes_to_all = True
-
-                    if yes_to_all or (not do.strip().startswith('n')):
-                        npf_meta = json.load(open(npf + '.meta'))
-                        pf_meta = json.load(open(pf + '.meta'))
-
-                        if image_refers.get(npf_name, None) is None:
-                            image_refers[npf_name] = {
-                                'name': npf_name,
-                                'uuid': pf_meta['uuid'],
-                                'rawTextureUuid': pf_meta['textureUuid'],
-                            }
-
-                        if image_refers[npf_name].get('ref', None) is None:
-                            image_refers[npf_name]['ref'] = []
-
-                        image_refers[npf_name]['ref'].append({
-                            'path': npf[len(folder_from) + 1:],
-                            'name': npf_name,
-                            'uuid': npf_meta['uuid'],
-                            'rawTextureUuid': npf_meta.get('textureUuid', '')
-                        })
-
-            os.remove(npf)
-            os.remove(npf + '.meta')
 
     # fill image_refers
     for root, dirs, files in os.walk(folder_from):
         for fn in files:
-            if fn.lower().endswith('.fnt'):
-                # deal with bmfont
-                fnt_path = os.path.join(root, fn)
-
-                f = open(fnt_path)
-                fnt_content = f.readlines()
-                f.close()
-
-                # des png name
-                png_path = fnt_path[:-4] + '.png'
-                png_ref = None
-                for rk in image_refers.keys():
-                    r = image_refers[rk]
-                    if png_path.endswith(r['name']):
-                        png_ref = r
-                        break
-
-                if png_ref is None:
-                    log.warn(fn + ' font png in [ ' + root + ' ] not in plist')
-                    print()
-                    warn += 1
-                    continue
-
-                if png_ref['rotated']:
-                    log.fail(str(png_ref) + ' font png is rotated')
-                    print()
-                    exit(-1)
-
-                fnt_meta = json.load(open(fnt_path + '.meta'))
-
-                log.head('will replace font png [' + png_path + '] in ' + fnt_path)
-
-                do = None
-                if not yes_to_all:
-                    log.fail('return to continue, n/N to skip, A yes to all')
-                    do = input()
-
-                if do is not None and do.strip().startswith('A'):
-                    yes_to_all = True
-
-                if not (yes_to_all or (not do.strip().startswith('n'))):
-                    continue
-
-                # remove fnt meta, will gen new when creator next load
-                os.remove(fnt_path + '.meta')
-
-                png_frame = png_ref['frame']
-                offset_x = png_frame['ox']
-                offset_y = png_frame['oy']
-
-                for i in range(0, len(fnt_content)):
-                    l = fnt_content[i]
-
-                    if l.startswith('char ') or l.startswith('page '):
-                        properties = l.split(' ')
-
-                        x, y, w, h, ox, oy = 0, 0, 0, 0, 0, 0
-
-                        for j in range(1, len(properties)):
-                            p = properties[j]
-
-                            if p.find('=') == -1:
-                                continue
-
-                            pair = p.split('=')
-
-                            if pair[0] == 'file':
-                                pair[1] = '"' + plist_name[:-6] + '.png"'
-
-                            if pair[0] == 'x':
-                                x = int(pair[1]) + png_frame['x'] - offset_x
-                                if x < png_frame['x']:
-                                    ox = png_frame['x'] - x
-                                    x = png_frame['x']
-                                pair[1] = str(x)
-
-                            if pair[0] == 'y':
-                                y = int(pair[1]) + png_frame['y'] - offset_y
-                                if y < png_frame['y']:
-                                    oy = png_frame['y'] - y
-                                    y = png_frame['y']
-                                pair[1] = str(y)
-
-                            if pair[0] == 'width':
-                                w = int(pair[1]) - ox
-                                if x + w > png_frame['w']:
-                                    w -= int((x + w) - png_frame['w'])
-                                pair[1] = str(w)
-
-                            if pair[0] == 'height':
-                                h = int(pair[1]) - oy
-                                if y + h > png_frame['h']:
-                                    h -= int((y + h) - png_frame['h'])
-                                pair[1] = str(h)
-
-                            if pair[0] == 'xoffset':
-                                pair[1] = str(int(pair[1]) + int(ox))
-
-                            if pair[0] == 'yoffset':
-                                pair[1] = str(int(pair[1]) + int(oy))
-
-                            properties[j] = "=".join(pair)
-
-                        l = " ".join(properties)
-                        if not l.endswith('\n'):
-                            l += '\n'
-                        fnt_content[i] = l
-
-                # write fnt
-                f = open(os.path.join(plist_folder, fn[:-4] + '_fix.fnt'), 'w')
-                f.writelines(fnt_content)
-                f.close()
-
-                # write meta
-                fnt_meta['textureUuid'] = image_refers[plist_name]['rawTextureUuid']
-
-                f = open(os.path.join(plist_folder, fn[:-4] + '_fix.fnt.meta'), 'w')
-                f.writelines(json.dumps(fnt_meta))
-                f.close()
-
-                ref += 1
-
-            elif fn.lower().endswith('.png'):
+            if fn.lower().endswith('.png'):
                 img_path = os.path.join(root, fn)
 
                 in_plist = False
@@ -531,9 +328,10 @@ def change_data_ref(data, key_to_change, value_from, value_to):
     return data, change_count
 
 
-def change_image_sprite_frame_refer(image_refers, project_path):
+def change_image_sprite_frame_refer(image_refers, project_path) -> int:
     assets = os.path.join(project_path, 'assets')
 
+    change_count = 0
     for root, dirs, files in os.walk(assets):
         for fn in files:
             if not (fn.lower().endswith('.anim') or fn.lower().endswith('.prefab') or fn.lower().endswith('.fire')):
@@ -580,6 +378,7 @@ def change_image_sprite_frame_refer(image_refers, project_path):
                     tx += r['name'] + ' in ' + r['path']
 
                 log.head('will replace sprite frames [' + sf + '] and textures [' + tx + '] in ' + file_path)
+                change_count += 1
 
                 for u in uuid:
                     content[i] = content[i].replace(u['src-uuid'], u['uuid'])
@@ -591,8 +390,10 @@ def change_image_sprite_frame_refer(image_refers, project_path):
             f.writelines(content)
             f.close()
 
+    return change_count
 
-def deal_with_images(folder_from, plist_to, project_path):
+
+def deal_with_images(folder_from, plist_to, project_path, quiet):
     log.head('reading plist images ...')
 
     plist_images = get_plist_images(plist_to)
@@ -606,7 +407,7 @@ def deal_with_images(folder_from, plist_to, project_path):
     log.head('searching images ...')
     print()
 
-    image_refers, warn_count, ref_count = get_folder_images(folder_from, plist_images, plist_to)
+    image_refers, warn_count, ref_count = get_folder_images(folder_from, plist_images, plist_to, quiet)
 
     for k in image_refers:
         o = image_refers[k]
@@ -622,12 +423,18 @@ def deal_with_images(folder_from, plist_to, project_path):
 
     log.fail('warn count: ' + str(warn_count))
     log.fail('ref count: ' + str(ref_count))
-    log.fail('continue? Y/n')
+    print()
 
-    do = input()
+    do = 'Y'
+    if not quiet:
+        log.fail('continue? Y/n')
+        do = input()
 
-    if do.strip().startswith('Y'):
-        change_image_sprite_frame_refer(image_refers, project_path)
+    change_count = 0
+    if quiet or do.strip().startswith('Y'):
+        change_count = change_image_sprite_frame_refer(image_refers, project_path)
+
+    return change_count
 
 
 def main():
@@ -641,20 +448,28 @@ def main():
     folder_from = ""
     plist_to = ""
     project_path = ""
+    quiet = False
 
     idx = 1
     while idx < arg_len:
         cmd_s = sys.argv[idx]
         if cmd_s[0] == "-":
             c = cmd_s[1:]
-            v = sys.argv[idx + 1]
             if c == "f":
+                v = sys.argv[idx + 1]
                 folder_from = v
+                idx += 2
             elif c == "t":
+                v = sys.argv[idx + 1]
                 plist_to = v
+                idx += 2
             elif c == "p":
+                v = sys.argv[idx + 1]
                 project_path = v
-            idx += 2
+                idx += 2
+            elif c == "q":
+                quiet = True
+                idx += 1
         else:
             idx += 1
 
@@ -663,6 +478,7 @@ def main():
               '\n\t-f [from folder path]'
               '\n\t-t [to plist path]'
               '\n\t-p [project path]'
+              '\n\t[ -q quiet mode ]'
               "\n\tto run")
         return
 
@@ -678,7 +494,22 @@ def main():
         else:
             project_path = os.path.join(os.getcwd(), project_path)
 
-    deal_with_images(folder_from, plist_to, project_path)
+    change_log = []
+    if os.path.isdir(plist_to):
+        for root, dirs, files in os.walk(plist_to):
+            for fn in files:
+                if fn.lower().endswith('.plist'):
+                    plist_path = os.path.join(root, fn)
+                    change_count = deal_with_images(folder_from, plist_path, project_path, quiet)
+                    change_log.append('with: [' + plist_path + '] changed references: ' + str(change_count))
+    else:
+        change_count = deal_with_images(folder_from, plist_to, project_path, quiet)
+        change_log.append('with: [' + plist_to + '] changed references: ' + str(change_count))
+
+    print()
+
+    for line in change_log:
+        log.green(line)
 
     log.green('Done.')
 
