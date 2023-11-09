@@ -3,20 +3,29 @@
 
 import json
 import os
-import shutil
-import subprocess
+import platform
 import sys
 
-import biplist
+import plistlib
 
 
 class Logger:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
+
+    def __init__(self):
+        if platform.system() == 'Windows':
+            self.HEADER = ''
+            self.OKBLUE = ''
+            self.OKGREEN = ''
+            self.WARNING = ''
+            self.FAIL = ''
+            self.ENDC = ''
+        else:
+            self.HEADER = '\033[95m'
+            self.OKBLUE = '\033[94m'
+            self.OKGREEN = '\033[92m'
+            self.WARNING = '\033[93m'
+            self.FAIL = '\033[91m'
+            self.ENDC = '\033[0m'
 
     def head(self, s):
         print(self.HEADER + str(s) + self.ENDC)
@@ -37,302 +46,168 @@ class Logger:
 log = Logger()
 
 
-def run_cmd(cmd):
-    log.blue("run cmd: " + " ".join(cmd))
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    out, err = p.communicate()
-    if err:
-        print(err)
-    return out
+class ImageRef:
+
+    def __init__(self, atlas: str, name: str, uuid: str, rawTextureUuid: str, atlasUuid: str, atlasRawTextureUuid: str):
+        self._atlas = atlas
+        self._name = name
+        self._uuid = uuid
+        self._rawTextureUuid = rawTextureUuid
+        self._atlasUuid = atlasUuid
+        self._atlasRawTextureUuid = atlasRawTextureUuid
+
+    def __str__(self):
+        return self._atlas + '[' + self._name + ']'
+
+    def atlas(self):
+        return self._atlas
+
+    def name(self):
+        return self._name
+
+    def uuid(self):
+        return self._uuid
+
+    def rawTextureUuid(self):
+        return self._rawTextureUuid
+
+    def atlasUuid(self):
+        return self._atlasUuid
+
+    def atlasRawTextureUuid(self):
+        return self._atlasRawTextureUuid
 
 
-def self_install(file, des):
-    file_path = os.path.realpath(file)
-
-    filename = file_path
-
-    pos = filename.rfind("/")
-    if pos:
-        filename = filename[pos + 1:]
-
-    pos = filename.find(".")
-    if pos:
-        filename = filename[:pos]
-
-    to_path = os.path.join(des, filename)
-
-    log.blue("installing [" + file_path + "] \n\tto [" + to_path + "]")
-    if os.path.isfile(to_path):
-        os.remove(to_path)
-
-    shutil.copy(file_path, to_path)
-    run_cmd(['chmod', 'a+x', to_path])
-
-
-def mkdir_p(path):
+def get_plist_images(plist_path: str, image_dict: dict[str, ImageRef]):
     try:
-        if path == "":
-            return
-
-        if os.path.isfile(path):
-            print("remove file: " + path)
-            os.remove(path)
-
-        if not os.path.isdir(path):
-            print("make dir: " + path)
-            os.makedirs(path)
-
-    except Exception as exc:
-        print(exc)
-
-
-def base_folder(path):
-    path = os.path.normpath(path)
-    path = str(path).rstrip(os.path.sep)
-    pos = path.rfind(os.path.sep)
-    if pos == -1:
-        return ""
-    else:
-        path = path[:pos]
-        path = path.rstrip(os.path.sep)
-        return path
-
-
-# return map :
-# '01.png' : <
-# 'name': '01.png',
-# 'uuid': 'd9c6fbc0-ddb0-497a-a670-a86bb0bb143d',
-# 'rawTextureUuid': 'abcb3647-c223-4d8d-bf73-63cab31c5d46'
-# >
-def get_plist_images(plist_path):
-    try:
-        plist = biplist.readPlist(plist_path)
+        with open(plist_path, 'rb') as fp:
+            plist = plistlib.load(fp, fmt=plistlib.FMT_XML)
     except:
         plist = None
         log.fail("read plist failed: " + str(sys.exc_info()[0]))
 
     if plist is not None:
-        ret = {}
-        images = plist['frames'].keys()
-        j = json.load(open(plist_path + '.meta'))
-        meta = j['subMetas']
-        for k in images:
-            if meta.get(k, None) is not None:
-                ref = meta[k]
+        image_names = plist['frames'].keys()
+        plist_meta_json = json.load(open(plist_path + '.meta'))
+
+        atlas_name = plist_path
+        atlas_uuid = plist_meta_json['uuid']
+        atlas_rawTextureUuid = plist_meta_json['rawTextureUuid']
+
+        meta = plist_meta_json['subMetas']
+        for img_name in image_names:
+            if meta.get(img_name, None) is not None:
+                ref = meta[img_name]
             else:
-                ref = meta[str(k).replace('/', '-')]
+                ref = meta[str(img_name).replace('/', '-')]
 
-            ret[k] = {
-                'name': k,
-                'uuid': ref['uuid'],
-                'rawTextureUuid': ref['rawTextureUuid'],
-            }
+            if img_name in image_dict:
+                raise Exception('duplicate image name: ' + img_name)
 
-        basename = os.path.basename(plist_path)
-        ret[basename] = {
-            'name': basename,
-            'uuid': j['uuid'],
-            'rawTextureUuid': j['rawTextureUuid'],
-        }
+            image_dict[img_name] = ImageRef(atlas_name, img_name, ref['uuid'],
+                                            ref['rawTextureUuid'], atlas_uuid, atlas_rawTextureUuid)
 
-        return ret
-
-    exit(-1)
+    else:
+        raise Exception('plist not supported: ' + plist_path)
 
 
-# return map :
-# '01.png' : <
-# 'name': '01.png',
-# 'uuid': 'd9c6fbc0-ddb0-497a-a670-a86bb0bb143d',
-# 'rawTextureUuid': 'abcb3647-c223-4d8d-bf73-63cab31c5d46',
-# 'ref' : [{
-# 'path': '',
-# 'name': '',
-# 'uuid': 'd9c6fbc0-ddb0-497a-a670-a86bb0bb143d',
-# 'rawTextureUuid': 'abcb3647-c223-4d8d-bf73-63cab31c5d46',
-# }]>
-def get_folder_images(folder_from, plist_images, plist_path, quiet):
-    image_refers = plist_images
-    warn = 0
-    ref = 0
-    yes_to_all = quiet or False
-    plist_name = os.path.basename(plist_path)
+def get_plist(image_path: str) -> str:
+    plist_path = image_path[:-4] + '.plist'
+    if os.path.exists(plist_path) and os.path.isfile(plist_path):
+        return plist_path
+    else:
+        return None
 
-    # fill image_refers
-    for root, dirs, files in os.walk(folder_from):
+
+def get_image(image_path: str, image_dict: dict[str, ImageRef]):
+    if image_path.lower().endswith('.png') or image_path.lower().endswith('.jpg'):
+        image_name = os.path.basename(image_path)
+
+        if image_name in image_dict:
+            raise Exception('duplicate image name: ' + image_name)
+
+        image_meta_json = json.load(open(image_path + '.meta'))
+        meta = image_meta_json['subMetas']
+        ref_key = image_name[:-4]  # .png len
+        if meta.get(ref_key, None) is not None:
+            ref = meta[ref_key]
+
+        image_dict[image_name] = ImageRef(
+            '', image_name, ref['uuid'], ref['rawTextureUuid'], '', '')
+    else:
+        raise Exception('not support image type: ' + image_path)
+
+
+def get_folder_images(folder_path, image_dict: dict[str, ImageRef]):
+    if not os.path.exists(folder_path):
+        raise Exception('folder not exists: ' + folder_path)
+    for root, _, files in os.walk(folder_path):
         for fn in files:
-            if fn.lower().endswith('.png'):
-                img_path = os.path.join(root, fn)
-
-                in_plist = False
-                ref_key = ''
-                for rk in plist_images:
-                    n = plist_images[rk]
-                    if img_path.endswith(n['name']):
-                        ref_key = rk
-                        in_plist = True
-                        break
-
-                if not in_plist:
-                    log.warn(fn + ' in [ ' + root + ' ] not in plist')
-                    print()
-                    warn += 1
-                    continue
-
-                j = json.load(open(img_path + '.meta'))
-                k = fn[:-4]  # .png len
-                meta = j['subMetas'][k]
-
-                log.head('will replace png named [ ' + fn + ' ] reference [ ' + img_path + ' ] with plist')
-
-                do = None
-                if not yes_to_all:
-                    log.fail('return to continue, n/N to skip, A yes to all')
-                    do = input()
-
-                if do is not None and do.strip().startswith('A'):
-                    yes_to_all = True
-
-                if yes_to_all or (not do.strip().startswith('n')):
-                    if image_refers[ref_key].get('ref', None) is None:
-                        image_refers[ref_key]['ref'] = []
-                    image_refers[ref_key]['ref'].append({
-                        'path': img_path,
-                        'name': ref_key,
-                        'uuid': meta['uuid'],
-                        'rawTextureUuid': meta['rawTextureUuid']
-                    })
-
-                ref += 1
-
-            elif fn.lower().endswith('.plist'):
-                plist_path = os.path.join(root, fn)
-
-                try:
-                    plist = biplist.readPlist(plist_path)
-                except:
-                    plist = None
-                    log.fail("read plist failed: " + str(sys.exc_info()[0]))
-
-                j = json.load(open(plist_path + '.meta'))
-                plist_meta = j['subMetas']
-                for k in plist['frames'].keys():
-                    if plist_meta.get(k, None) is not None:
-                        meta = plist_meta[k]
-                    else:
-                        meta = plist_meta[str(k).replace('/', '-')]
-
-                    in_plist = False
-                    ref_key = ''
-                    for rk in plist_images:
-                        n = plist_images[rk]
-                        if k.endswith(n['name']):
-                            ref_key = rk
-                            in_plist = True
-                            break
-
-                    if not in_plist:
-                        log.warn(k + ' in [ ' + plist_path + ' ] not in plist')
-                        print()
-                        warn += 1
-                        continue
-
-                    log.head('will replace png named [ ' + k + ' ] reference [ ' + plist_path + ' ] with plist')
-
-                    do = None
-                    if not yes_to_all:
-                        log.fail('return to continue, n/N to skip, A yes to all')
-                        do = input()
-
-                    if do is not None and do.strip().startswith('A'):
-                        yes_to_all = True
-
-                    if yes_to_all or (not do.strip().startswith('n')):
-                        if image_refers[ref_key].get('ref', None) is None:
-                            image_refers[ref_key]['ref'] = []
-                        image_refers[ref_key]['ref'].append({
-                            'path': plist_path,
-                            'name': ref_key,
-                            'uuid': meta['uuid'],
-                            'rawTextureUuid': meta['rawTextureUuid']
-                        })
-
-                        if image_refers[plist_name].get('ref', None) is None:
-                            image_refers[plist_name]['ref'] = []
-                        has = False
-                        for x in image_refers[plist_name]['ref']:
-                            if x['uuid'] == j['uuid']:
-                                has = True
-                                break
-                        if not has:
-                            image_refers[plist_name]['ref'].append({
-                                'path': plist_path,
-                                'name': fn,
-                                'uuid': j['uuid'],
-                                'rawTextureUuid': j['rawTextureUuid']
-                            })
-
-                    ref += 1
-
-    return image_refers, warn, ref
+            file_path = os.path.join(root, fn)
+            plist_path = get_plist(file_path)
+            if plist_path is not None:
+                get_plist_images(plist_path, image_dict)
+            elif fn.lower().endswith('.png') or fn.lower().endswith('.jpg'):
+                get_image(file_path, image_dict)
 
 
-def contains_src_uuid(image_refers, line):
-    uuid = []
-    rawTextureUuid = []
-    for k in image_refers:
-        o = image_refers[k]
+class ImageRefReplace:
 
-        if o.get('ref', None) is None:
-            continue
+    def __init__(self, image_from: ImageRef, image_to: ImageRef):
+        self._image_from = image_from
+        self._image_to = image_to
 
-        for x in o['ref']:
-            if len(x['uuid']) > 0 and str(line).find(x['uuid']) != -1:
-                uuid.append({
-                    'uuid': o['uuid'],
-                    'name': o['name'],
-                    'path': x['path'],
-                    'src-uuid': x['uuid']
-                })
-            if len(x['rawTextureUuid']) > 0 and str(line).find(x['rawTextureUuid']) != -1:
-                rawTextureUuid.append({
-                    'rawTextureUuid': o['rawTextureUuid'],
-                    'name': o['name'],
-                    'path': x['path'],
-                    'src-rawTextureUuid': x['rawTextureUuid']
-                })
-    return uuid, rawTextureUuid
+    def __str__(self):
+        return self._image_from.atlas() + '[' + self._image_from.name() + '] -> ' + self._image_to.atlas() + \
+            '[' + self._image_to.name() + ']'
 
+    def from_uuid(self):
+        return self._image_from.uuid()
 
-def change_data_ref(data, key_to_change, value_from, value_to):
-    change_count = 0
-    for key in data.keys():
-        o = data[key]
-        if key == key_to_change:
-            if value_from == 'any' or o == value_from:
-                if o != value_to:
-                    data[key] = value_to
-                    change_count += 1
-        else:
-            if isinstance(o, dict):
-                o, c = change_data_ref(o, key_to_change, value_from, value_to)
-                data[key] = o
-                change_count += c
-            elif isinstance(o, list):
-                new_list = []
-                for i in range(0, len(o)):
-                    oi, c = change_data_ref(o[i], key_to_change, value_from, value_to)
-                    new_list.append(oi)
-                    change_count += c
-                data[key] = new_list
-    return data, change_count
+    def to_uuid(self):
+        return self._image_to.uuid()
+
+    def from_rawTextureUuid(self):
+        return self._image_from.rawTextureUuid()
+
+    def to_rawTextureUuid(self):
+        return self._image_to.rawTextureUuid()
+
+    def from_atlasUuid(self):
+        return self._image_from.atlasUuid()
+
+    def to_atlasUuid(self):
+        return self._image_to.atlasUuid()
+
+    def from_atlasRawTextureUuid(self):
+        return self._image_from.atlasRawTextureUuid()
+
+    def to_atlasRawTextureUuid(self):
+        return self._image_to.atlasRawTextureUuid()
 
 
-def change_image_sprite_frame_refer(image_refers, project_path) -> int:
+def contains_src_uuid(images_from: dict[str, ImageRef], images_to: dict[str, ImageRef], line: str) -> list[ImageRefReplace]:
+    replaces = []
+    for k in images_from:
+        o = images_from[k]
+
+        if len(o.uuid()) > 0 and str(line).find(o.uuid()) != -1:
+            replaces.append(ImageRefReplace(o, images_to[o.name()]))
+        if len(o.rawTextureUuid()) > 0 and str(line).find(o.rawTextureUuid()) != -1:
+            replaces.append(ImageRefReplace(o, images_to[o.name()]))
+        if len(o.atlasUuid()) > 0 and str(line).find(o.atlasUuid()) != -1:
+            replaces.append(ImageRefReplace(o, images_to[o.name()]))
+        if len(o.atlasRawTextureUuid()) > 0 and str(line).find(o.atlasRawTextureUuid()) != -1:
+            replaces.append(ImageRefReplace(o, images_to[o.name()]))
+    return replaces
+
+
+def change_image_sprite_frame_refer(images_from: dict[str, ImageRef], images_to: dict[str, ImageRef], project_path: str) -> int:
+
     assets = os.path.join(project_path, 'assets')
 
     change_count = 0
-    for root, dirs, files in os.walk(assets):
+    for root, _, files in os.walk(assets):
         for fn in files:
             if not (fn.lower().endswith('.anim') or fn.lower().endswith('.prefab') or fn.lower().endswith('.fire')):
                 continue
@@ -341,14 +216,14 @@ def change_image_sprite_frame_refer(image_refers, project_path) -> int:
 
             log.head('working on ' + file_path + ' ...')
 
-            f = open(file_path)
+            f = open(file_path, encoding='utf-8')
             content = f.readlines()
             f.close()
 
             for i in range(0, len(content)):
                 l = content[i]
-                uuid, rawTextureUuid = contains_src_uuid(image_refers, l)
-                if len(uuid) == 0 and len(rawTextureUuid) == 0:
+                replaces = contains_src_uuid(images_from, images_to, l)
+                if len(replaces) == 0:
                     continue
 
                 start = i - 2
@@ -365,90 +240,66 @@ def change_image_sprite_frame_refer(image_refers, project_path) -> int:
                     s = s.strip('\n')
                     log.blue(s)
 
-                sf = ''
-                for u in uuid:
+                sf = '\t'
+                for r in replaces:
                     if len(sf) > 0:
-                        sf += ', '
-                    sf += u['name'] + ' in ' + u['path']
+                        sf += '\n\t'
+                    sf += str(r)
 
-                tx = ''
-                for r in rawTextureUuid:
-                    if len(tx) > 0:
-                        tx += ', '
-                    tx += r['name'] + ' in ' + r['path']
-
-                log.head('will replace sprite frames [' + sf + '] and textures [' + tx + '] in ' + file_path)
+                log.head(
+                    'will replace sprite frames\n' + sf + '\nin ' + file_path)
                 change_count += 1
 
-                for u in uuid:
-                    content[i] = content[i].replace(u['src-uuid'], u['uuid'])
+                for r in replaces:
+                    if len(r.from_uuid()) > 0:
+                        content[i] = content[i].replace(
+                            r.from_uuid(), r.to_uuid())
+                    if len(r.from_rawTextureUuid()) > 0:
+                        content[i] = content[i].replace(
+                            r.from_rawTextureUuid(), r.to_rawTextureUuid())
+                    if len(r.from_atlasUuid()) > 0:
+                        content[i] = content[i].replace(
+                            r.from_atlasUuid(), r.to_atlasUuid())
+                    if len(r.from_atlasRawTextureUuid()) > 0:
+                        content[i] = content[i].replace(
+                            r.from_atlasRawTextureUuid(), r.to_atlasRawTextureUuid())
 
-                for r in rawTextureUuid:
-                    content[i] = content[i].replace(r['src-rawTextureUuid'], r['rawTextureUuid'])
-
-            f = open(file_path, 'w')
+            f = open(file_path, 'w', encoding='utf-8')
             f.writelines(content)
             f.close()
 
     return change_count
 
 
-def deal_with_images(folder_from, plist_to, project_path, quiet):
-    log.head('reading plist images ...')
+def deal_with_images(images_from: dict[str, ImageRef], images_to: dict[str, ImageRef], project_path: str):
 
-    plist_images = get_plist_images(plist_to)
+    log.head('deal_with_images')
 
-    log.head('get image ref in plist:')
-    for k in plist_images.keys():
-        log.blue(k)
-
-    print()
-
-    log.head('searching images ...')
-    print()
-
-    image_refers, warn_count, ref_count = get_folder_images(folder_from, plist_images, plist_to, quiet)
-
-    for k in image_refers:
-        o = image_refers[k]
-
-        if o.get('ref', None) is not None:
-            log.green('will exchange ref :')
-            for j in o['ref']:
-                log.blue('\t' + j['name'] + '  -  ' + j['path'])
-
-            log.green('with ref :')
-            log.blue('\t' + o['name'] + ' in ' + plist_to)
-            print()
-
-    log.fail('warn count: ' + str(warn_count))
-    log.fail('ref count: ' + str(ref_count))
-    print()
+    for k in images_from:
+        img_from = images_from[k]
+        img_to = images_to[k]
+        log.warn('\t' + img_from.atlas() + '[' + img_from.name() + '] -> ' + img_to.atlas() +
+                 '[' + img_to.name() + ']')
 
     do = 'Y'
-    if not quiet:
-        log.fail('continue? Y/n')
-        do = input()
+    log.fail('continue? Y/n')
+    do = input()
 
     change_count = 0
-    if quiet or do.strip().startswith('Y'):
-        change_count = change_image_sprite_frame_refer(image_refers, project_path)
+    if do.strip().startswith('Y'):
+        change_count = change_image_sprite_frame_refer(
+            images_from, images_to, project_path)
 
     return change_count
 
 
 def main():
-    # self_install
-    if len(sys.argv) > 1 and sys.argv[1] == 'install':
-        self_install("creator-atlas-exchanger.py", "/usr/local/bin")
-        return
 
     arg_len = len(sys.argv)
 
     folder_from = ""
     plist_to = ""
     project_path = ""
-    quiet = False
 
     idx = 1
     while idx < arg_len:
@@ -467,18 +318,14 @@ def main():
                 v = sys.argv[idx + 1]
                 project_path = v
                 idx += 2
-            elif c == "q":
-                quiet = True
-                idx += 1
         else:
             idx += 1
 
     if len(folder_from) == 0 or len(plist_to) == 0:
         print('using creator-atlas-exchanger '
               '\n\t-f [from folder path]'
-              '\n\t-t [to plist path]'
+              '\n\t-t [to folder path]'
               '\n\t-p [project path]'
-              '\n\t[ -q quiet mode ]'
               "\n\tto run")
         return
 
@@ -494,23 +341,58 @@ def main():
         else:
             project_path = os.path.join(os.getcwd(), project_path)
 
-    change_log = []
-    if os.path.isdir(plist_to):
-        for root, dirs, files in os.walk(plist_to):
-            for fn in files:
-                if fn.lower().endswith('.plist'):
-                    plist_path = os.path.join(root, fn)
-                    change_count = deal_with_images(folder_from, plist_path, project_path, quiet)
-                    change_log.append('with: [' + plist_path + '] changed references: ' + str(change_count))
-    else:
-        change_count = deal_with_images(folder_from, plist_to, project_path, quiet)
-        change_log.append('with: [' + plist_to + '] changed references: ' + str(change_count))
+    # enum from folder
+    from_images: dict[str, ImageRef] = {}
+    get_folder_images(folder_from, from_images)
+
+    # enum to plist
+    to_images: dict[str, ImageRef] = {}
+    get_folder_images(plist_to, to_images)
+
+    # print images not in to
+    not_in_to = []
+    from_keys = list(from_images.keys())
+    for i in range(0, len(from_keys)):
+        key = from_keys[i]
+        if key.endswith('.plist'):
+            continue
+        if key not in to_images:
+            not_in_to.append(from_images[key])
+            from_images.remove(key)
+
+    if len(not_in_to) > 0:
+        log.warn('images not in to: ')
+        for img in not_in_to:
+            log.warn('\t' + str(img))
+
+    # print images not in from
+    not_in_from = []
+    to_keys = list(to_images.keys())
+    for i in range(0, len(to_keys)):
+        key = to_keys[i]
+        if key.endswith('.plist'):
+            continue
+        if key not in from_images:
+            not_in_from.append(to_images[key])
+            to_images.remove(key)
+
+    if len(not_in_from) > 0:
+        log.warn('images not in from: ')
+        for img in not_in_from:
+            log.warn('\t' + str(img))
+
+    if len(not_in_from) > 0 and len(not_in_to) > 0:
+        do = ''
+        log.fail('continue? Y/n')
+        do = input()
+
+        if do.strip() != 'Y':
+            log.fail('exit.')
+            return
+
+    deal_with_images(from_images, to_images, project_path)
 
     print()
-
-    for line in change_log:
-        log.green(line)
-
     log.green('Done.')
 
 
